@@ -9,6 +9,7 @@ import {
 	sendWelcomeEmail,
 } from "../mailtrap/emails.js";
 import { User } from "../models/user.model.js";
+import { encryptData, decryptData } from "../utils/encryption.js"; // Import encryption utilities
 
 export const signup = async (req, res) => {
 	const { email, password, name } = req.body;
@@ -25,12 +26,13 @@ export const signup = async (req, res) => {
 			return res.status(400).json({ success: false, message: "User already exists" });
 		}
 
-		const hashedPassword = await bcryptjs.hash(password, 10);
+		// Encrypt password
+		const encryptedPassword = encryptData(password);
 		const verificationToken = Math.floor(100000 + Math.random() * 900000).toString();
 
 		const user = new User({
 			email,
-			password: hashedPassword,
+			password: encryptedPassword, // Save encrypted password
 			name,
 			verificationToken,
 			verificationTokenExpiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
@@ -96,8 +98,10 @@ export const login = async (req, res) => {
 		if (!user) {
 			return res.status(400).json({ success: false, message: "Invalid credentials" });
 		}
-		const isPasswordValid = await bcryptjs.compare(password, user.password);
-		if (!isPasswordValid) {
+
+		// Decrypt password
+		const decryptedPassword = decryptData(user.password);
+		if (decryptedPassword !== password) {
 			return res.status(400).json({ success: false, message: "Invalid credentials" });
 		}
 
@@ -167,10 +171,9 @@ export const resetPassword = async (req, res) => {
 			return res.status(400).json({ success: false, message: "Invalid or expired reset token" });
 		}
 
-		// update password
-		const hashedPassword = await bcryptjs.hash(password, 10);
-
-		user.password = hashedPassword;
+		// Update password with encryption
+		const encryptedPassword = encryptData(password);
+		user.password = encryptedPassword; // Save encrypted password
 		user.resetPasswordToken = undefined;
 		user.resetPasswordExpiresAt = undefined;
 		await user.save();
