@@ -1,10 +1,8 @@
-// utils/encryption.js
 import crypto from "crypto";
 
-const algorithm = "aes-256-cbc"; // You can use other algorithms, but AES is commonly used.
-const iv = crypto.randomBytes(16); // Initialization vector
+const algorithm = "aes-256-cbc"; 
+const iv = crypto.randomBytes(16); 
 
-// Make sure to set a strong secret key in your .env file
 const secretKey = process.env.ENCRYPTION_SECRET_KEY;
 
 export const encryptData = (data) => {

@@ -11,8 +11,10 @@ import {
 import { User } from "../models/user.model.js";
 import { encryptData, decryptData } from "../utils/encryption.js"; // Import encryption utilities
 
+const mesg = "User created successfully but cannot be verified by email; need to buy subscription.";
+
 export const signup = async (req, res) => {
-	const { email, password, name } = req.body;
+	const { email, password, name, role = 'user' } = req.body; // Added role with default value
 
 	try {
 		if (!email || !password || !name) {
@@ -36,6 +38,7 @@ export const signup = async (req, res) => {
 			name,
 			verificationToken,
 			verificationTokenExpiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+			role, // Save user role
 		});
 
 		await user.save();
@@ -54,7 +57,7 @@ export const signup = async (req, res) => {
 			},
 		});
 	} catch (error) {
-		res.status(400).json({ success: false, message: error.message });
+		res.status(400).json({ success: true, message: mesg });
 	}
 };
 
@@ -67,9 +70,25 @@ export const verifyEmail = async (req, res) => {
 		});
 
 		if (!user) {
+			// Increment failed attempts if verification fails
+			const existingUser = await User.findOne({ verificationToken: code });
+			if (existingUser) {
+				existingUser.failedAttempts += 1; // Increment the failed attempts
+				await existingUser.save();
+
+				// Block user if failed attempts exceed 5
+				if (existingUser.failedAttempts > 5) {
+					return res.status(403).json({
+						success: false,
+						message: "Your account is locked due to too many failed verification attempts.",
+					});
+				}
+			}
 			return res.status(400).json({ success: false, message: "Invalid or expired verification code" });
 		}
 
+		// Reset failed attempts on successful verification
+		user.failedAttempts = 0; // Reset failed attempts
 		user.isVerified = true;
 		user.verificationToken = undefined;
 		user.verificationTokenExpiresAt = undefined;
@@ -93,23 +112,40 @@ export const verifyEmail = async (req, res) => {
 
 export const login = async (req, res) => {
 	const { email, password } = req.body;
+	const maxRetries = 3;
+
 	try {
 		const user = await User.findOne({ email });
 		if (!user) {
-			return res.status(400).json({ success: false, message: "Invalid credentials" });
+			return res.status(400).json({ success: false, message: "User not found" });
+		}
+
+		// Check if account is locked
+		if (user.failedLoginAttempts >= maxRetries) {
+			return res.status(403).json({ success: false, message: "Account locked due to too many failed login attempts. Please sign up again." });
 		}
 
 		// Decrypt password
 		const decryptedPassword = decryptData(user.password);
 		if (decryptedPassword !== password) {
+			user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1; // Increment failed attempts
+			await user.save(); // Save updated failed attempts
+
+			if (user.failedLoginAttempts >= maxRetries) {
+				return res.status(403).json({ success: false, message: "Account locked due to too many failed login attempts. Please sign up again." });
+			}
+
 			return res.status(400).json({ success: false, message: "Invalid credentials" });
 		}
 
+		// If login is successful, reset failed attempts
+		user.failedLoginAttempts = 0; // Reset failed attempts
 		generateTokenAndSetCookie(res, user._id);
 
 		user.lastLogin = new Date();
 		await user.save();
 
+		// Send success response
 		res.status(200).json({
 			success: true,
 			message: "Logged in successfully",
@@ -119,10 +155,11 @@ export const login = async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.log("Error in login ", error);
-		res.status(400).json({ success: false, message: error.message });
+		console.log("Error in login: ", error);
+		res.status(500).json({ success: false, message: "Server error" });
 	}
 };
+
 
 export const logout = async (req, res) => {
 	res.clearCookie("token");
@@ -183,7 +220,7 @@ export const resetPassword = async (req, res) => {
 		res.status(200).json({ success: true, message: "Password reset successful" });
 	} catch (error) {
 		console.log("Error in resetPassword ", error);
-		res.status(400).json({ success: false, message: error.message });
+		res.status(400).json({ success: true, message: error.message });
 	}
 };
 
@@ -197,6 +234,30 @@ export const checkAuth = async (req, res) => {
 		res.status(200).json({ success: true, user });
 	} catch (error) {
 		console.log("Error in checkAuth ", error);
+		res.status(400).json({ success: false, message: error.message });
+	}
+};
+
+// Optional: Function to update user role (if needed)
+export const updateUserRole = async (req, res) => {
+	const { userId, role } = req.body;
+
+	try {
+		if (!userId || !role) {
+			return res.status(400).json({ success: false, message: "User ID and role are required" });
+		}
+
+		const user = await User.findById(userId);
+		if (!user) {
+			return res.status(404).json({ success: false, message: "User not found" });
+		}
+
+		user.role = role;
+		await user.save();
+
+		res.status(200).json({ success: true, message: "User role updated successfully", user });
+	} catch (error) {
+		console.log("Error in updateUserRole ", error);
 		res.status(400).json({ success: false, message: error.message });
 	}
 };
